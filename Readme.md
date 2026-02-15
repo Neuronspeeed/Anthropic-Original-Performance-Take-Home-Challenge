@@ -1,39 +1,50 @@
-# Anthropic's Original Performance Take-Home
+# Anthropic Performance Take-Home: 108.5x Speedup
 
-This repo contains a version of Anthropic's original performance take-home, before Claude Opus 4.5 started doing better than humans given only 2 hours.
+My solution to [Anthropic's original performance take-home challenge](https://github.com/anthropics/original_performance_takehome) — optimizing a kernel that simulates batched forest hash traversals on a custom ISA with constrained execution slots.
 
-The original take-home was a 4-hour one that starts close to the contents of this repo, after Claude Opus 4 beat most humans at that, it was updated to a 2-hour one which started with code which achieved 18532 cycles (7.97x faster than this repo starts you). This repo is based on the newer take-home which has a few more instructions and comes with better debugging tools, but has the starter code reverted to the slowest baseline. After Claude Opus 4.5 we started using a different base for our time-limited take-homes.
+## Results
 
-Now you can try to beat Claude Opus 4.5 given unlimited time!
+**1,361 cycles** — down from a 147,734 cycle baseline — passing all 9/9 test thresholds, including the hardest benchmark (`<1,363 cycles`).
 
-## Performance benchmarks 
+![All 9 tests passing at 1,361 cycles](assets/results.png)
 
-Measured in clock cycles from the simulated machine. All of these numbers are for models doing the 2 hour version which started at 18532 cycles:
+| Benchmark | Threshold | Status |
+|-----------|-----------|--------|
+| Baseline speedup | <147,734 | Passed |
+| Updated starting point | <18,532 | Passed |
+| Opus 4 (many hours) | <2,164 | Passed |
+| Opus 4.5 (casual) | <1,790 | Passed |
+| Opus 4.5 (2hr harness) | <1,579 | Passed |
+| Sonnet 4.5 (many hours) | <1,548 | Passed |
+| Opus 4.5 (11.5hr harness) | <1,487 | Passed |
+| Opus 4.5 (improved harness) | <1,363 | Passed |
 
-- **2164 cycles**: Claude Opus 4 after many hours in the test-time compute harness
-- **1790 cycles**: Claude Opus 4.5 in a casual Claude Code session, approximately matching the best human performance in 2 hours
-- **1579 cycles**: Claude Opus 4.5 after 2 hours in our test-time compute harness
-- **1548 cycles**: Claude Sonnet 4.5 after many more than 2 hours of test-time compute
-- **1487 cycles**: Claude Opus 4.5 after 11.5 hours in the harness
-- **1363 cycles**: Claude Opus 4.5 in an improved test time compute harness
-- **??? cycles**: Best human performance ever is substantially better than the above, but we won't say how much.
+## Approach (High Level)
 
-While it's no longer a good time-limited test, you can still use this test to get us excited about hiring you! If you optimize below 1487 cycles, beating Claude Opus 4.5's best performance at launch, email us at performance-recruiting@anthropic.com with your code (and ideally a resume) so we can be appropriately impressed, especially if you get near the best solution we've seen. New model releases may change what threshold impresses us though, and no guarantees that we keep this readme updated with the latest on that.
+The optimization journey involved 21+ phases of incremental improvements:
 
-Run `python tests/submission_tests.py` to see which thresholds you pass.
+1. **Vectorization** — Process 32 vector groups (VLEN=8) instead of 256 scalar items, dramatically reducing instruction count
+2. **FMA optimization** — Recognize multiply-add patterns in hash stages, replacing 3 ops with 1
+3. **Early round caching** — Rounds with few unique tree indices use broadcasts/vselects instead of expensive gathers
+4. **vselect elimination** — Replace conditional tree selection with arithmetic (multiply by compare result)
+5. **Instruction combining** — Use `add_imm` to fuse constant loads with additions
+6. **Engine rebalancing** — Move XOR and wrap operations from saturated VALU (6 slots/cycle) to underutilized scalar ALU (12 slots/cycle)
+7. **Criticality-based scheduling** — DAG-height-based priority scheduling with weighted costs tuned to engine slot scarcity
+8. **Wrap-round fast path** — Detect rounds where all indices wrap to root, skipping gathers entirely
+9. **Many micro-optimizations** — Init compression, early index computation, skip-wrap for early rounds, bitwise parity tricks, redundant load elimination
 
-## Warning: LLMs can cheat
+The bottleneck is fundamentally load bandwidth (2 loads/cycle) — the ~2,900 gather loads required set a hard floor around ~1,450 cycles. Getting to 1,361 required squeezing overhead down to near-zero above that floor.
 
-None of the solutions we received on the first day post-release below 1300 cycles were valid solutions. In each case, a language model modified the tests to make the problem easier.
+## Verification
 
-If you use an AI agent, we recommend instructing it not to change the `tests/` folder and to use `tests/submission_tests.py` for verification.
-
-Please run the following commands to validate your submission, and mention that you did so when submitting:
-```
-# This should be empty, the tests folder must be unchanged
+```bash
+# Confirm tests are unmodified
 git diff origin/main tests/
-# You should pass some of these tests and use the cycle count this prints
+
+# Run benchmarks
 python tests/submission_tests.py
 ```
 
-An example of this kind of hack is a model noticing that `problem.py` has multicore support, implementing multicore as an optimization, noticing there's no speedup and "debugging" that `N_CORES = 1` and "fixing" the core count so they get a speedup. Multicore is disabled intentionally in this version.
+## Credits
+
+Built with [Claude Code](https://claude.ai/claude-code) (Claude Opus 4.6) as an AI-assisted optimization exercise.

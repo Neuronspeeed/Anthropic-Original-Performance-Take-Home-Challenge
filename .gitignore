@@ -1,4 +1,11 @@
 trace.json
 **/*.pyc
+__pycache__/
 .hypothesis
 .DS_Store
+
+# Solution files — not shared publicly
+perf_takehome.py
+CLAUDE.md
+thoughts/
+.claude
